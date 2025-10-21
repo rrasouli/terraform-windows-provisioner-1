@@ -42,7 +42,7 @@ $acl | Set-Acl
 Restart-Service sshd
 # success
 # Firewall Rules
-New-NetFirewallRule -DisplayName "ContainerLogsPort" -LocalPort 10250 -Enabled True -Direction Inbound -Protocol TCP -Action Allow -EdgeTraversalPolicy Allow
+New-NetFirewallRule -DisplayName "ContainerLogsPort" -LocalPort ${var.container_logs_port} -Enabled True -Direction Inbound -Protocol TCP -Action Allow -EdgeTraversalPolicy Allow
 # Install Docker
 Install-PackageProvider -Name NuGet -MinimumVersion 2.8.5.201 -Force
 # configure repository policy

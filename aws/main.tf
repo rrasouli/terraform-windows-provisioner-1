@@ -49,11 +49,11 @@ resource "aws_instance" "win_server" {
   # Instance initialization
   user_data           = data.template_file.windows-userdata[count.index].rendered
 
-  # Storage configuration  
+  # Storage configuration
   root_block_device {
-    volume_size = 120
-    volume_type = "gp2"
-    
+    volume_size = var.root_volume_size
+    volume_type = var.root_volume_type
+
     tags = {
       Name = "${var.winc_instance_name}-${count.index}-root"
     }
@@ -63,8 +63,8 @@ resource "aws_instance" "win_server" {
   tags = {
     Name = "${var.winc_instance_name}-${count.index}"
     "kubernetes.io/cluster/${var.winc_cluster_name}" = "owned"
-    Environment = "production"
-    ManagedBy = "terraform"
+    Environment = var.environment_tag
+    ManagedBy   = var.managed_by_tag
   }
 
   lifecycle {

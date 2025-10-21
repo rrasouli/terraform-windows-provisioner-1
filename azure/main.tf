@@ -34,9 +34,7 @@ data "azurerm_platform_image" "windows-image" {
   publisher = "MicrosoftWindowsServer"
   offer     = "WindowsServer"
   sku       = var.winc_worker_sku
-  version   = var.winc_worker_sku == "2019-datacenter-smalldisk" ? "17763.4499.230606" : 
-              var.winc_worker_sku == "2022-datacenter-smalldisk" ? "20348.1787.230621" : 
-              null
+  version   = var.windows_image_version
 }
 
 data "azurerm_virtual_machine" "winc-machine-node" {
@@ -59,8 +57,8 @@ resource "azurerm_network_interface" "winc-byoh-interface" {
 
   tags = {
     Name        = "${var.winc_instance_name}-${count.index}-nic"
-    Environment = "production"
-    ManagedBy   = "terraform"
+    Environment = var.environment_tag
+    ManagedBy   = var.managed_by_tag
   }
 }
 
@@ -97,8 +95,8 @@ resource "azurerm_windows_virtual_machine" "win_server" {
 
   tags = {
     Name        = "${var.winc_instance_name}-${count.index}"
-    Environment = "production"
-    ManagedBy   = "terraform"
+    Environment = var.environment_tag
+    ManagedBy   = var.managed_by_tag
   }
 
   lifecycle {
@@ -114,7 +112,7 @@ resource "azurerm_virtual_machine_extension" "configure-byoh" {
   virtual_machine_id   = azurerm_windows_virtual_machine.win_server[count.index].id
   publisher            = "Microsoft.Compute"
   type                 = "CustomScriptExtension"
-  type_handler_version = "1.9"
+  type_handler_version = var.vm_extension_handler_version
 
   protected_settings = jsonencode({
     commandToExecute = "powershell -command \"[System.Text.Encoding]::UTF8.GetString([System.Convert]::FromBase64String('${base64encode(data.template_file.windows-userdata.rendered)}')) | Out-File -filepath install.ps1\" && powershell -ExecutionPolicy Unrestricted -File install.ps1"
