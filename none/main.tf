@@ -7,11 +7,15 @@ terraform {
   }
 }
 
-# USE Environment variables AWS_ACCESS_KEY and AWS_SECRET_ACCESS_KEY
-# export AWS_ACCESS_KEY = "********"
-# export AWS_SECRET_ACCESS_KEY = "*********"
+# AWS Provider Configuration
+# Credentials are automatically discovered via AWS SDK credential chain:
+# 1. Environment variables: AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY, AWS_SESSION_TOKEN
+# 2. AWS_SHARED_CREDENTIALS_FILE environment variable (set by Jenkins/flexy)
+# 3. ~/.aws/credentials file with optional profile
+# 4. IAM instance role
 provider "aws" {
-  region     = var.winc_region
+  region  = var.winc_region
+  profile = var.aws_profile != "" ? var.aws_profile : null
 }
 
 resource "aws_instance" "win_server" {

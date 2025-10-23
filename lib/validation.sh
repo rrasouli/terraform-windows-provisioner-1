@@ -98,8 +98,11 @@ function validate_inputs() {
 function validate_prerequisites() {
     log "Validating prerequisites..."
 
+    # Use TERRAFORM_BIN environment variable or default to 'terraform'
+    local terraform_cmd="${TERRAFORM_BIN:-terraform}"
+
     # Check for required tools
-    local required_tools=("terraform" "oc" "jq" "base64")
+    local required_tools=("$terraform_cmd" "oc" "jq" "base64")
 
     for tool in "${required_tools[@]}"; do
         if ! command -v "$tool" &> /dev/null; then
@@ -108,7 +111,8 @@ function validate_prerequisites() {
     done
 
     # Check Terraform version
-    local tf_version=$(terraform version -json | jq -r '.terraform_version')
+    local tf_version=$($terraform_cmd version -json 2>/dev/null | jq -r '.terraform_version' 2>/dev/null || echo "unknown")
+    log "Terraform command: $terraform_cmd"
     log "Terraform version: $tf_version"
 
     # Check cluster access

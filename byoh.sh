@@ -184,17 +184,39 @@ function main() {
         export_cloud_credentials "$platform"
     fi
 
-    # Get Terraform arguments
-    local terraform_args
-    terraform_args=$(get_terraform_arguments "$platform" "$byoh_name" "$num_byoh" "$win_version")
-
     # Execute action
     case "$action" in
         "apply")
             log "Starting provisioning workflow..."
             handle_templates_dir "$templates_dir" "apply" "$platform"
             terraform_init "$templates_dir"
-            terraform_apply "$templates_dir" "$terraform_args"
+
+            # Write tfvars file for the platform
+            case "$platform" in
+                "aws")
+                    write_aws_tfvars "$templates_dir" "$byoh_name" "$num_byoh"
+                    ;;
+                "gcp")
+                    write_gcp_tfvars "$templates_dir" "$byoh_name" "$num_byoh"
+                    ;;
+                "azure")
+                    write_azure_tfvars "$templates_dir" "$byoh_name" "$num_byoh" "$win_version"
+                    ;;
+                "vsphere")
+                    write_vsphere_tfvars "$templates_dir" "$byoh_name" "$num_byoh" "$win_version"
+                    ;;
+                "nutanix")
+                    write_nutanix_tfvars "$templates_dir" "$byoh_name" "$num_byoh" "$win_version"
+                    ;;
+                "none")
+                    write_none_tfvars "$templates_dir" "$byoh_name" "$num_byoh"
+                    ;;
+                *)
+                    error "Unsupported platform: ${platform}"
+                    ;;
+            esac
+
+            terraform_apply "$templates_dir"
             create_configmap "$templates_dir" "$platform"
             log "Provisioning completed successfully!"
             log "Windows instances are ready and registered with WMCO"
@@ -207,7 +229,7 @@ function main() {
             fi
 
             delete_configmap "$templates_dir"
-            terraform_destroy "$templates_dir" "$terraform_args"
+            terraform_destroy "$templates_dir"
             cleanup_templates_dir "$templates_dir"
             log "Destruction completed successfully!"
             ;;

@@ -29,14 +29,6 @@ data "azurerm_subnet" "winc_subnet" {
   resource_group_name  = var.winc_resource_group
 }
 
-data "azurerm_platform_image" "windows-image" {
-  location  = data.azurerm_resource_group.winc_rg.location
-  publisher = "MicrosoftWindowsServer"
-  offer     = "WindowsServer"
-  sku       = var.winc_worker_sku
-  version   = var.windows_image_version
-}
-
 data "azurerm_virtual_machine" "winc-machine-node" {
   name                = var.winc_machine_hostname
   resource_group_name = var.winc_resource_group
@@ -80,17 +72,13 @@ resource "azurerm_windows_virtual_machine" "win_server" {
   os_disk {
     caching              = "ReadWrite"
     storage_account_type = "Standard_LRS"
-
-    tags = {
-      Name = "${var.winc_instance_name}-${count.index}-osdisk"
-    }
   }
 
   source_image_reference {
-    publisher = data.azurerm_platform_image.windows-image.publisher
-    offer     = data.azurerm_platform_image.windows-image.offer
-    sku       = data.azurerm_platform_image.windows-image.sku
-    version   = data.azurerm_platform_image.windows-image.version
+    publisher = "MicrosoftWindowsServer"
+    offer     = "WindowsServer"
+    sku       = var.winc_worker_sku
+    version   = var.windows_image_version
   }
 
   tags = {
@@ -115,7 +103,7 @@ resource "azurerm_virtual_machine_extension" "configure-byoh" {
   type_handler_version = var.vm_extension_handler_version
 
   protected_settings = jsonencode({
-    commandToExecute = "powershell -command \"[System.Text.Encoding]::UTF8.GetString([System.Convert]::FromBase64String('${base64encode(data.template_file.windows-userdata.rendered)}')) | Out-File -filepath install.ps1\" && powershell -ExecutionPolicy Unrestricted -File install.ps1"
+    commandToExecute = "powershell -command \"[System.Text.Encoding]::UTF8.GetString([System.Convert]::FromBase64String('${base64encode(data.template_file.windows-userdata[count.index].rendered)}')) | Out-File -filepath install.ps1\" && powershell -ExecutionPolicy Unrestricted -File install.ps1"
   })
 
   tags = {

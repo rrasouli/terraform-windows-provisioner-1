@@ -13,6 +13,7 @@ if (!(Test-Path $authorizedKeyFolder))
   New-Item -path $authorizedKeyFolder  -ItemType Directory
 }
 Write-Output "${var.ssh_public_key}" | Out-File -FilePath $authorizedKeyConf -Encoding ascii
+Add-WindowsCapability -Online -Name OpenSSH.Server~~~~0.0.1.0
 # SSH service startup type
 Set-Service -Name ssh-agent -StartupType 'Automatic'
 Set-Service -Name sshd -StartupType 'Automatic'

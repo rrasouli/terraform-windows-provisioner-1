@@ -4,6 +4,11 @@ variable "winc_instance_name" {
   type        = string
 }
 
+variable "winc_machine_hostname" {
+  description = "Hostname of an existing cluster worker node"
+  type        = string
+}
+
 variable "winc_number_workers" {
   description = "Number of BYOH worker instances to create"
   type        = number
@@ -17,8 +22,8 @@ variable "primary_windows_image" {
 }
 
 # Nutanix Infrastructure Configuration
-variable "winc_cluster_name" {
-  description = "Name of the Nutanix cluster"
+variable "winc_cluster_uuid" {
+  description = "UUID of the Nutanix cluster"
   type        = string
 }
 
@@ -28,6 +33,17 @@ variable "subnet_uuid" {
 }
 
 # Nutanix Authentication Configuration
+variable "nutanix_endpoint" {
+  description = "Nutanix Prism Central endpoint address"
+  type        = string
+}
+
+variable "nutanix_port" {
+  description = "Nutanix Prism Central port"
+  type        = number
+  default     = 9440
+}
+
 variable "nutanix_username" {
   description = "Username for Nutanix authentication"
   type        = string

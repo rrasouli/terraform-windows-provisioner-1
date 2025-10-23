@@ -14,14 +14,9 @@ terraform {
 provider "nutanix" {
   username = var.nutanix_username
   password = var.nutanix_password
-  endpoint = "prismcentral.lts-cluster.nutanix-dev.devcluster.openshift.com"
+  endpoint = var.nutanix_endpoint
+  port     = var.nutanix_port
   insecure = true
-  port     = 9440
-}
-
-# Get cluster info
-data "nutanix_cluster" "cluster" {
-  name = "Development-LTS"
 }
 
 # Get image info
@@ -32,7 +27,7 @@ data "nutanix_image" "windows" {
 resource "nutanix_virtual_machine" "win_server" {
   count                = var.winc_number_workers
   name                = "${var.winc_instance_name}-${count.index}"
-  cluster_uuid        = data.nutanix_cluster.cluster.metadata.uuid
+  cluster_uuid        = var.winc_cluster_uuid
   
   num_vcpus_per_socket = 2
   num_sockets         = 1
@@ -53,6 +48,12 @@ resource "nutanix_virtual_machine" "win_server" {
   }
 }
 
+resource "time_sleep" "wait_120_seconds" {
+  depends_on      = [nutanix_virtual_machine.win_server]
+  create_duration = "120s"
+}
+
 output "instance_ip" {
-  value = nutanix_virtual_machine.win_server[*].nic_list[0].ip_endpoint_list[0].ip
+  value      = nutanix_virtual_machine.win_server[*].nic_list[0].ip_endpoint_list[0].ip
+  depends_on = [time_sleep.wait_120_seconds]
 }

@@ -2,6 +2,44 @@
 # Credential management module
 # Handles loading credentials from multiple sources
 
+# Extract SSH public key from cloud-private-key secret
+function get_ssh_public_key_from_secret() {
+    local wmco_namespace
+    wmco_namespace=$(oc get deployment --all-namespaces -o=jsonpath="{.items[?(@.metadata.name=='windows-machine-config-operator')].metadata.namespace}" 2>/dev/null)
+
+    if [[ -z "$wmco_namespace" ]]; then
+        log "Warning: WMCO namespace not found. Cannot extract SSH public key from cloud-private-key secret."
+        return 1
+    fi
+
+    log "Extracting SSH public key from cloud-private-key secret in namespace: $wmco_namespace"
+
+    # Get the private key from the secret
+    local private_key=$(oc get secret cloud-private-key -n "$wmco_namespace" -o jsonpath='{.data.private-key\.pem}' 2>/dev/null | base64 -d)
+
+    if [[ -z "$private_key" ]]; then
+        log "Warning: cloud-private-key secret not found in namespace $wmco_namespace"
+        return 1
+    fi
+
+    # Extract the public key from the private key using ssh-keygen
+    # Write to temp file to avoid stdin permission issues
+    local temp_key_file=$(mktemp)
+    echo "$private_key" > "$temp_key_file"
+    chmod 600 "$temp_key_file"
+
+    local public_key=$(ssh-keygen -y -f "$temp_key_file" 2>/dev/null)
+    rm -f "$temp_key_file"
+
+    if [[ -z "$public_key" ]]; then
+        log "Warning: Failed to extract public key from private key"
+        return 1
+    fi
+
+    echo "$public_key"
+    return 0
+}
+
 # Load Windows credentials from environment or config file
 function load_windows_credentials() {
     local winc_password=$(get_config "WINC_ADMIN_PASSWORD")
@@ -21,13 +59,23 @@ function load_windows_credentials() {
         fi
     fi
 
+    # If SSH key is still not found, try to extract it from cloud-private-key secret
+    if [[ -z "$winc_ssh_key" ]]; then
+        log "WINC_SSH_PUBLIC_KEY not set. Attempting to extract from cloud-private-key secret..."
+        winc_ssh_key=$(get_ssh_public_key_from_secret)
+
+        if [[ -n "$winc_ssh_key" ]]; then
+            log "Successfully extracted SSH public key from cloud-private-key secret"
+        fi
+    fi
+
     # Validate credentials are loaded
     if [[ -z "$winc_password" ]]; then
         error "WINC_ADMIN_PASSWORD is required but not set. Please set it via environment variable or config file."
     fi
 
     if [[ -z "$winc_ssh_key" ]]; then
-        error "WINC_SSH_PUBLIC_KEY is required but not set. Please set it via environment variable or config file."
+        error "WINC_SSH_PUBLIC_KEY is required but not set. Please set it via environment variable, config file, or ensure cloud-private-key secret exists in WMCO namespace."
     fi
 
     # Export for use in Terraform
@@ -60,7 +108,9 @@ function export_cloud_credentials() {
             export_nutanix_credentials
             ;;
         "none")
-            validate_aws_local_credentials
+            # Platform "none": Trust that AWS credentials are configured
+            # Terraform AWS provider will auto-discover credentials from environment
+            log "Platform 'none' - AWS credentials will be auto-discovered by Terraform"
             ;;
         *)
             error "Platform ${platform} not supported for credential export"
@@ -82,7 +132,7 @@ function export_aws_credentials() {
             error "Failed to load AWS credentials from cluster secrets"
         fi
 
-        export AWS_ACCESS_KEY="$aws_key"
+        export AWS_ACCESS_KEY_ID="$aws_key"
         export AWS_SECRET_ACCESS_KEY="$aws_secret"
     fi
 }
@@ -131,20 +181,34 @@ function export_azure_credentials() {
 
 # vSphere credential export
 function export_vsphere_credentials() {
-    if [[ -z "${VSPHERE_USER:-}" ]] || [[ -z "${VSPHERE_PASSWORD:-}" ]]; then
+    if [[ -z "${VSPHERE_USER:-}" ]] || [[ -z "${VSPHERE_PASSWORD:-}" ]] || [[ -z "${VSPHERE_SERVER:-}" ]]; then
         log "vSphere credentials not in environment, attempting to load from cluster secrets..."
 
-        local vsphere_user=$(oc -n kube-system get secret vsphere-creds -o=jsonpath='{.data.vcenter\.username}' 2>/dev/null | base64 -d)
-        local vsphere_password=$(oc -n kube-system get secret vsphere-creds -o=jsonpath='{.data.vcenter\.password}' 2>/dev/null | base64 -d)
-        local vsphere_server=$(oc -n kube-system get secret vsphere-creds -o=jsonpath='{.data.vcenter\.server}' 2>/dev/null | base64 -d)
+        # Get vSphere server from Windows machineset
+        local vsphere_server=$(oc get machineset.machine.openshift.io -n openshift-machine-api -o=jsonpath="{.items[?(@.spec.template.metadata.labels.machine\.openshift\.io\/os-id=='Windows')].spec.template.spec.providerSpec.value.workspace.server}" 2>/dev/null)
 
-        if [[ -z "$vsphere_user" ]] || [[ -z "$vsphere_password" ]] || [[ -z "$vsphere_server" ]]; then
-            error "Failed to load vSphere credentials from cluster secrets"
+        if [[ -z "$vsphere_server" ]]; then
+            error "Failed to get vSphere server from Windows machineset. Ensure Windows machineset exists."
+        fi
+
+        log "Found vSphere server from machineset: $vsphere_server"
+
+        # Escape dots for jsonpath (replace . with \.)
+        local vsphere_server_escaped=$(echo "${vsphere_server}" | sed 's/\./\\./g')
+
+        # Get credentials using the server name as the key prefix
+        local vsphere_user=$(oc -n kube-system get secret vsphere-creds -o=jsonpath="{.data.${vsphere_server_escaped}\.username}" 2>/dev/null | base64 -d)
+        local vsphere_password=$(oc -n kube-system get secret vsphere-creds -o=jsonpath="{.data.${vsphere_server_escaped}\.password}" 2>/dev/null | base64 -d)
+
+        if [[ -z "$vsphere_user" ]] || [[ -z "$vsphere_password" ]]; then
+            error "Failed to load vSphere credentials from cluster secrets. Expected keys: ${vsphere_server}.username and ${vsphere_server}.password"
         fi
 
         export VSPHERE_USER="$vsphere_user"
         export VSPHERE_PASSWORD="$vsphere_password"
         export VSPHERE_SERVER="$vsphere_server"
+
+        log "Successfully loaded vSphere credentials for server: $vsphere_server"
     fi
 }
 
@@ -167,10 +231,52 @@ function export_nutanix_credentials() {
     fi
 }
 
-# Validate local AWS credentials for baremetal deployment
+# Validate AWS credentials for "none" platform (UPI/baremetal)
+# Supports multiple authentication methods for different CI/CD environments
 function validate_aws_local_credentials() {
-    if [[ ! -f "$HOME/.aws/config" ]] || [[ ! -f "$HOME/.aws/credentials" ]]; then
-        error "AWS credentials not found at ~/.aws/config or ~/.aws/credentials. Configure your AWS account following: https://docs.aws.amazon.com/cli/latest/userguide/cli-configure-files.html"
+    # Method 1: Check for AWS profile with shared credentials file (CI systems like Jenkins)
+    if [[ -n "${AWS_PROFILE:-}" ]] && [[ -n "${AWS_SHARED_CREDENTIALS_FILE:-}" ]]; then
+        log "AWS credentials configured via profile '${AWS_PROFILE}' with shared credentials file"
+        # Ensure they're exported for Terraform
+        export AWS_PROFILE
+        export AWS_SHARED_CREDENTIALS_FILE
+        return 0
     fi
-    log "AWS local credentials validated"
+
+    # Method 2: Check if credentials are in environment variables (direct credentials)
+    if [[ -n "${AWS_ACCESS_KEY_ID:-}" ]] && [[ -n "${AWS_SECRET_ACCESS_KEY:-}" ]]; then
+        log "AWS credentials found in environment variables"
+
+        # Check for session token (needed for SAML/STS temporary credentials)
+        if [[ -n "${AWS_SESSION_TOKEN:-}" ]]; then
+            log "AWS session token found (temporary/SAML credentials)"
+        elif [[ -n "${AWS_SECURITY_TOKEN:-}" ]]; then
+            log "AWS security token found (temporary/SAML credentials)"
+            # Some tools use AWS_SESSION_TOKEN, ensure both are set
+            export AWS_SESSION_TOKEN="${AWS_SECURITY_TOKEN}"
+        fi
+
+        return 0
+    fi
+
+    # Method 3: Check for AWS profile with default credentials file
+    if [[ -n "${AWS_PROFILE:-}" ]] && [[ -f "$HOME/.aws/credentials" ]]; then
+        log "AWS credentials configured via profile '${AWS_PROFILE}' with ~/.aws/credentials"
+        export AWS_PROFILE
+        return 0
+    fi
+
+    # Method 4: Check for default AWS credentials file
+    if [[ -f "$HOME/.aws/credentials" ]]; then
+        log "AWS credentials will be read from ~/.aws/credentials by Terraform"
+        return 0
+    fi
+
+    # No valid credentials found
+    error "AWS credentials not found. For platform 'none' (UPI/baremetal), you must configure one of:
+  1. AWS Profile: Set AWS_PROFILE and AWS_SHARED_CREDENTIALS_FILE (or use ~/.aws/credentials)
+  2. Environment variables: AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY, and AWS_SESSION_TOKEN (if using SAML/temporary credentials)
+  3. AWS CLI: Run 'aws configure' to set up ~/.aws/credentials
+
+See: https://docs.aws.amazon.com/cli/latest/userguide/cli-configure-files.html"
 }

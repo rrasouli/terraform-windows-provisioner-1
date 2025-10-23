@@ -11,29 +11,29 @@ terraform {
   }
 }
 
-# USE Environment variables VSPHERE_USER, VSPHERE_PASSWORD and VSPHERE_SERVER
-# export VSPHERE_USER = "********"
-# export VSPHERE_PASSWORD = "*********"
 provider "vsphere" {
-  allow_unverified_ssl = false
+  user                 = var.vsphere_user
+  password             = var.vsphere_password
+  vsphere_server       = var.vsphere_server
+  allow_unverified_ssl = true
 }
 
 data "vsphere_datacenter" "dc" {
-  name = "DEVQEdatacenter"
+  name = var.winc_datacenter
 }
 
 data "vsphere_datastore" "datastore" {
-  name          = "vsanDatastore"
+  name          = var.winc_datastore
   datacenter_id = data.vsphere_datacenter.dc.id
 }
 
 data "vsphere_resource_pool" "pool" {
-  name          = "/DEVQEdatacenter/host/DEVQEcluster/Resources"
+  name          = var.winc_resource_pool
   datacenter_id = data.vsphere_datacenter.dc.id
 }
 
 data "vsphere_network" "network" {
-  name          = "devqe-segment-221"
+  name          = var.winc_network
   datacenter_id = data.vsphere_datacenter.dc.id
 }
 

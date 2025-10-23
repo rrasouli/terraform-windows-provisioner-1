@@ -70,7 +70,8 @@ data:
 EOF
 
     # Add instance IPs to ConfigMap
-    local instance_ips=$(terraform output -json instance_ip 2>/dev/null | jq -r '.[]')
+    local terraform_cmd="${TERRAFORM_BIN:-terraform}"
+    local instance_ips=$($terraform_cmd output -json instance_ip 2>/dev/null | jq -r '.[]')
 
     if [[ -z "$instance_ips" ]]; then
         error "Failed to get instance IPs from Terraform output"
@@ -105,12 +106,13 @@ EOF
 # Run Terraform init
 function terraform_init() {
     local templates_dir="$1"
+    local terraform_cmd="${TERRAFORM_BIN:-terraform}"
 
     log "Initializing Terraform in: ${templates_dir}"
 
     cd "$templates_dir" || error "Failed to change to templates directory: ${templates_dir}"
 
-    if ! terraform init; then
+    if ! $terraform_cmd init; then
         error "Terraform init failed"
     fi
 
@@ -120,14 +122,13 @@ function terraform_init() {
 # Run Terraform apply
 function terraform_apply() {
     local templates_dir="$1"
-    local terraform_args="$2"
+    local terraform_cmd="${TERRAFORM_BIN:-terraform}"
 
-    log "Running Terraform apply with arguments: ${terraform_args}"
+    log "Running Terraform apply (using terraform.auto.tfvars)..."
 
     cd "$templates_dir" || error "Failed to change to templates directory: ${templates_dir}"
 
-    # shellcheck disable=SC2086
-    if ! terraform apply --auto-approve $terraform_args; then
+    if ! $terraform_cmd apply --auto-approve; then
         error "Terraform apply failed"
     fi
 
@@ -137,14 +138,13 @@ function terraform_apply() {
 # Run Terraform destroy
 function terraform_destroy() {
     local templates_dir="$1"
-    local terraform_args="$2"
+    local terraform_cmd="${TERRAFORM_BIN:-terraform}"
 
-    log "Running Terraform destroy with arguments: ${terraform_args}"
+    log "Running Terraform destroy (using terraform.auto.tfvars)..."
 
     cd "$templates_dir" || error "Failed to change to templates directory: ${templates_dir}"
 
-    # shellcheck disable=SC2086
-    if ! terraform destroy --auto-approve $terraform_args; then
+    if ! $terraform_cmd destroy --auto-approve; then
         error "Terraform destroy failed"
     fi
 

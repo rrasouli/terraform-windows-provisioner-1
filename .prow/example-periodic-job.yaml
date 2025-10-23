@@ -1,0 +1,293 @@
+# Example Prow Periodic Job Configuration
+# This file shows how to configure a periodic job for BYOH Windows node testing
+# To use in openshift/release, copy to:
+# ci-operator/jobs/openshift/windows-machine-config-operator/openshift-windows-machine-config-operator-<branch>-periodics.yaml
+
+periodics:
+# ==============================================================================
+# AWS BYOH Windows Node Tests
+# ==============================================================================
+
+- name: periodic-ci-wmco-aws-byoh-windows2022-e2e
+  interval: 24h
+  cluster: build01
+  decorate: true
+  decoration_config:
+    timeout: 4h0m
+    grace_period: 30m
+  labels:
+    ci.openshift.io/generator: prowgen
+    pj-rehearse.openshift.io/can-be-rehearsed: "true"
+  spec:
+    serviceAccountName: ci-operator
+    containers:
+    - name: test
+      image: quay.io/openshift/byoh-provisioner:latest
+      imagePullPolicy: Always
+      command:
+      - /bin/bash
+      - -c
+      - |
+        #!/bin/bash
+        set -euo pipefail
+
+        # Cleanup function
+        cleanup() {
+          echo "Cleaning up resources..."
+          /usr/local/bin/byoh.sh destroy aws-periodic-${BUILD_ID} 2 || true
+          # Save artifacts
+          mkdir -p ${ARTIFACTS:-/tmp/artifacts}
+          cp -r /tmp/terraform_byoh/* ${ARTIFACTS}/ 2>/dev/null || true
+        }
+        trap cleanup EXIT
+
+        # Set credentials from secrets
+        export WINC_ADMIN_PASSWORD="${WINDOWS_ADMIN_PASSWORD}"
+        export WINC_SSH_PUBLIC_KEY="${WINDOWS_SSH_PUBLIC_KEY}"
+
+        # Configure for CI
+        export ENVIRONMENT_TAG="ci-prow"
+        export MANAGED_BY_TAG="prow-periodic"
+        export AWS_INSTANCE_TYPE="m5a.large"
+
+        echo "Provisioning 2 Windows 2022 BYOH nodes on AWS..."
+        /usr/local/bin/byoh.sh apply aws-periodic-${BUILD_ID} 2 '' 2022
+
+        echo "Waiting for nodes to be ready..."
+        sleep 120
+
+        # Run your e2e tests here
+        echo "Running e2e tests..."
+        # make test-e2e-byoh || exit 1
+
+        echo "Tests completed successfully!"
+      env:
+      - name: BUILD_ID
+        value: "$(PROW_JOB_ID)"
+      - name: KUBECONFIG
+        value: /tmp/kubeconfig
+      - name: WINDOWS_ADMIN_PASSWORD
+        valueFrom:
+          secretKeyRef:
+            name: windows-ci-credentials
+            key: admin-password
+      - name: WINDOWS_SSH_PUBLIC_KEY
+        valueFrom:
+          secretKeyRef:
+            name: windows-ci-credentials
+            key: ssh-public-key
+      - name: ARTIFACTS
+        value: /tmp/artifacts
+      volumeMounts:
+      - name: cluster-profile
+        mountPath: /tmp/cluster-profile
+      - name: artifacts
+        mountPath: /tmp/artifacts
+      resources:
+        requests:
+          cpu: "1"
+          memory: "2Gi"
+        limits:
+          cpu: "2"
+          memory: "4Gi"
+    volumes:
+    - name: cluster-profile
+      secret:
+        secretName: cluster-profile-aws
+    - name: artifacts
+      emptyDir: {}
+
+# ==============================================================================
+# Azure BYOH Windows Node Tests
+# ==============================================================================
+
+- name: periodic-ci-wmco-azure-byoh-windows2022-e2e
+  interval: 24h
+  cluster: build01
+  decorate: true
+  decoration_config:
+    timeout: 4h0m
+    grace_period: 30m
+  labels:
+    ci.openshift.io/generator: prowgen
+    pj-rehearse.openshift.io/can-be-rehearsed: "true"
+  spec:
+    serviceAccountName: ci-operator
+    containers:
+    - name: test
+      image: quay.io/openshift/byoh-provisioner:latest
+      imagePullPolicy: Always
+      command:
+      - /bin/bash
+      - -c
+      - |
+        #!/bin/bash
+        set -euo pipefail
+
+        cleanup() {
+          echo "Cleaning up resources..."
+          /usr/local/bin/byoh.sh destroy azure-periodic-${BUILD_ID} 2 || true
+          mkdir -p ${ARTIFACTS:-/tmp/artifacts}
+          cp -r /tmp/terraform_byoh/* ${ARTIFACTS}/ 2>/dev/null || true
+        }
+        trap cleanup EXIT
+
+        export WINC_ADMIN_PASSWORD="${WINDOWS_ADMIN_PASSWORD}"
+        export WINC_SSH_PUBLIC_KEY="${WINDOWS_SSH_PUBLIC_KEY}"
+        export ENVIRONMENT_TAG="ci-prow"
+        export MANAGED_BY_TAG="prow-periodic"
+        export AZURE_INSTANCE_SIZE="Standard_D2s_v3"
+        export AZURE_2022_IMAGE_VERSION="latest"
+
+        echo "Provisioning 2 Windows 2022 BYOH nodes on Azure..."
+        /usr/local/bin/byoh.sh apply azure-periodic-${BUILD_ID} 2 '' 2022
+
+        echo "Waiting for nodes to be ready..."
+        sleep 120
+
+        echo "Running e2e tests..."
+        # make test-e2e-byoh || exit 1
+
+        echo "Tests completed successfully!"
+      env:
+      - name: BUILD_ID
+        value: "$(PROW_JOB_ID)"
+      - name: KUBECONFIG
+        value: /tmp/kubeconfig
+      - name: WINDOWS_ADMIN_PASSWORD
+        valueFrom:
+          secretKeyRef:
+            name: windows-ci-credentials
+            key: admin-password
+      - name: WINDOWS_SSH_PUBLIC_KEY
+        valueFrom:
+          secretKeyRef:
+            name: windows-ci-credentials
+            key: ssh-public-key
+      - name: ARTIFACTS
+        value: /tmp/artifacts
+      volumeMounts:
+      - name: cluster-profile
+        mountPath: /tmp/cluster-profile
+      - name: artifacts
+        mountPath: /tmp/artifacts
+      resources:
+        requests:
+          cpu: "1"
+          memory: "2Gi"
+        limits:
+          cpu: "2"
+          memory: "4Gi"
+    volumes:
+    - name: cluster-profile
+      secret:
+        secretName: cluster-profile-azure
+    - name: artifacts
+      emptyDir: {}
+
+# ==============================================================================
+# Windows N+1 Upgrade Test (WINC-1473 primary use case)
+# ==============================================================================
+
+- name: periodic-ci-wmco-byoh-upgrade-test
+  interval: 48h
+  cluster: build01
+  decorate: true
+  decoration_config:
+    timeout: 6h0m
+    grace_period: 30m
+  labels:
+    ci.openshift.io/generator: prowgen
+    pj-rehearse.openshift.io/can-be-rehearsed: "true"
+  spec:
+    serviceAccountName: ci-operator
+    containers:
+    - name: test
+      image: quay.io/openshift/byoh-provisioner:latest
+      imagePullPolicy: Always
+      command:
+      - /bin/bash
+      - -c
+      - |
+        #!/bin/bash
+        set -euo pipefail
+
+        cleanup() {
+          echo "Cleaning up resources..."
+          /usr/local/bin/byoh.sh destroy upgrade-test-${BUILD_ID} 4 || true
+          mkdir -p ${ARTIFACTS:-/tmp/artifacts}
+          cp -r /tmp/terraform_byoh/* ${ARTIFACTS}/ 2>/dev/null || true
+          # Collect upgrade logs
+          oc get clusterversion -o yaml > ${ARTIFACTS}/clusterversion.yaml 2>/dev/null || true
+          oc get nodes -o wide > ${ARTIFACTS}/nodes.txt 2>/dev/null || true
+        }
+        trap cleanup EXIT
+
+        export WINC_ADMIN_PASSWORD="${WINDOWS_ADMIN_PASSWORD}"
+        export WINC_SSH_PUBLIC_KEY="${WINDOWS_SSH_PUBLIC_KEY}"
+        export ENVIRONMENT_TAG="ci-upgrade-test"
+        export MANAGED_BY_TAG="prow-periodic"
+
+        echo "=== Phase 1: Provision Windows BYOH nodes on current version ==="
+        /usr/local/bin/byoh.sh apply upgrade-test-${BUILD_ID} 4
+
+        echo "Waiting for nodes to join cluster..."
+        sleep 180
+
+        echo "=== Phase 2: Deploy test workloads ==="
+        # Deploy your test workloads
+        # oc apply -f test-workloads.yaml
+
+        echo "=== Phase 3: Trigger cluster upgrade to N+1 ==="
+        # Get next version
+        CURRENT_VERSION=$(oc get clusterversion version -o jsonpath='{.status.desired.version}')
+        echo "Current version: ${CURRENT_VERSION}"
+        # Trigger upgrade
+        # oc adm upgrade --to=<next-version>
+
+        echo "=== Phase 4: Wait for upgrade to complete ==="
+        # oc wait --for=condition=Progressing=False clusterversion/version --timeout=120m
+        # oc wait --for=condition=Available=True clusterversion/version --timeout=120m
+
+        echo "=== Phase 5: Verify Windows nodes and workloads ==="
+        # Verify nodes are healthy
+        # oc get nodes
+        # Run e2e tests
+        # make test-e2e-upgrade
+
+        echo "Upgrade test completed successfully!"
+      env:
+      - name: BUILD_ID
+        value: "$(PROW_JOB_ID)"
+      - name: KUBECONFIG
+        value: /tmp/kubeconfig
+      - name: WINDOWS_ADMIN_PASSWORD
+        valueFrom:
+          secretKeyRef:
+            name: windows-ci-credentials
+            key: admin-password
+      - name: WINDOWS_SSH_PUBLIC_KEY
+        valueFrom:
+          secretKeyRef:
+            name: windows-ci-credentials
+            key: ssh-public-key
+      - name: ARTIFACTS
+        value: /tmp/artifacts
+      volumeMounts:
+      - name: cluster-profile
+        mountPath: /tmp/cluster-profile
+      - name: artifacts
+        mountPath: /tmp/artifacts
+      resources:
+        requests:
+          cpu: "2"
+          memory: "4Gi"
+        limits:
+          cpu: "4"
+          memory: "8Gi"
+    volumes:
+    - name: cluster-profile
+      secret:
+        secretName: cluster-profile-aws
+    - name: artifacts
+      emptyDir: {}

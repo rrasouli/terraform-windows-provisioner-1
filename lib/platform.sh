@@ -74,10 +74,13 @@ function get_terraform_arguments() {
     echo "$terraform_args"
 }
 
-# AWS Terraform arguments
-function get_aws_terraform_args() {
-    local byoh_name="$1"
-    local num_byoh="$2"
+# Write AWS Terraform variables to tfvars file
+function write_aws_tfvars() {
+    local templates_dir="$1"
+    local byoh_name="$2"
+    local num_byoh="$3"
+
+    local tfvars_file="${templates_dir}/terraform.auto.tfvars"
 
     local win_machine_hostname=$(oc get nodes -l "node-role.kubernetes.io/worker,windowsmachineconfig.openshift.io/byoh!=true" -o=jsonpath="{.items[0].status.addresses[?(@.type=='Hostname')].address}")
     local windows_ami=$(oc get machineset.machine.openshift.io -n openshift-machine-api -o=jsonpath="{.items[?(@.spec.template.metadata.labels.machine\.openshift\.io\/os-id=='Windows')].spec.template.spec.providerSpec.value.ami.id}")
@@ -94,7 +97,265 @@ function get_aws_terraform_args() {
     local managed_by=$(get_config "MANAGED_BY_TAG" "terraform")
     local container_port=$(get_config "WINDOWS_CONTAINER_LOGS_PORT" "10250")
 
-    echo "--var winc_number_workers=${num_byoh} --var winc_machine_hostname=${win_machine_hostname} --var winc_instance_name=${byoh_name} --var winc_worker_ami=${windows_ami} --var winc_cluster_name=${cluster_name} --var winc_region=${region} --var winc_instance_type='${instance_type}' --var admin_password='${admin_password}' --var ssh_public_key='${ssh_key}' --var root_volume_size=${volume_size} --var root_volume_type='${volume_type}' --var environment_tag='${env_tag}' --var managed_by_tag='${managed_by}' --var container_logs_port=${container_port}"
+    cat > "${tfvars_file}" << EOF
+# Auto-generated Terraform variables for AWS
+winc_number_workers   = ${num_byoh}
+winc_machine_hostname = "${win_machine_hostname}"
+winc_instance_name    = "${byoh_name}"
+winc_worker_ami       = "${windows_ami}"
+winc_cluster_name     = "${cluster_name}"
+winc_region           = "${region}"
+winc_instance_type    = "${instance_type}"
+admin_password        = "${admin_password}"
+ssh_public_key        = "${ssh_key}"
+root_volume_size      = ${volume_size}
+root_volume_type      = "${volume_type}"
+environment_tag       = "${env_tag}"
+managed_by_tag        = "${managed_by}"
+container_logs_port   = ${container_port}
+EOF
+}
+
+# Write GCP Terraform variables to tfvars file
+function write_gcp_tfvars() {
+    local templates_dir="$1"
+    local byoh_name="$2"
+    local num_byoh="$3"
+
+    local tfvars_file="${templates_dir}/terraform.auto.tfvars"
+
+    local win_machine_hostname=$(oc get nodes -l "node-role.kubernetes.io/worker,windowsmachineconfig.openshift.io/byoh!=true" -o=jsonpath="{.items[0].status.addresses[?(@.type=='Hostname')].address}" | cut -d "." -f1)
+    local zone=$(oc get machine.machine.openshift.io -n openshift-machine-api -o=jsonpath="{.items[0].metadata.labels.machine\.openshift\.io\/zone}")
+    local region=$(oc get infrastructure cluster -o=jsonpath="{.status.platformStatus.gcp.region}")
+    local project=$(oc get infrastructure cluster -o=jsonpath="{.status.platformStatus.gcp.projectID}")
+
+    # Get configuration values
+    local admin_password=$(get_config "WINC_ADMIN_PASSWORD")
+    local ssh_key=$(get_config "WINC_SSH_PUBLIC_KEY")
+    local instance_type=$(get_config "GCP_INSTANCE_TYPE" "n1-standard-4")
+    local win_version=$(get_config "GCP_WINDOWS_VERSION" "windows-2022-core")
+    local admin_username=$(get_config "GCP_ADMIN_USERNAME" "Administrator")
+
+    cat > "${tfvars_file}" << EOF
+# Auto-generated Terraform variables for GCP
+winc_number_workers   = ${num_byoh}
+winc_machine_hostname = "${win_machine_hostname}"
+winc_instance_name    = "${byoh_name}"
+winc_zone             = "${zone}"
+winc_region           = "${region}"
+winc_project          = "${project}"
+winc_instance_type    = "${instance_type}"
+winc_win_version      = "${win_version}"
+admin_username        = "${admin_username}"
+admin_password        = "${admin_password}"
+ssh_public_key        = "${ssh_key}"
+EOF
+}
+
+# Write Azure Terraform variables to tfvars file
+function write_azure_tfvars() {
+    local templates_dir="$1"
+    local byoh_name="$2"
+    local num_byoh="$3"
+    local win_version="${4:-2022}"
+
+    local tfvars_file="${templates_dir}/terraform.auto.tfvars"
+
+    # Azure computer name can't take more than 15 characters
+    if [[ ${#byoh_name} -gt 13 ]]; then
+        log "Warning: Azure instance names longer than 13 characters will be truncated"
+        byoh_name="${byoh_name:0:13}"
+    fi
+
+    local win_machine_hostname=$(oc get nodes -l "node-role.kubernetes.io/worker,windowsmachineconfig.openshift.io/byoh!=true" -o=jsonpath="{.items[0].metadata.name}")
+    local resource_group="${ARM_RESOURCEGROUP}"
+    local resource_prefix="${ARM_RESOURCE_PREFIX}"
+
+    # Get SKU from existing Windows MachineSet to match cluster configuration
+    local sku=$(oc get machineset.machine.openshift.io -n openshift-machine-api -o=jsonpath="{.items[?(@.spec.template.metadata.labels.machine\.openshift\.io\/os-id=='Windows')].spec.template.spec.providerSpec.value.image.sku}")
+
+    # Get admin username from existing Windows MachineSet to match cluster configuration
+    local admin_username=$(oc get machineset.machine.openshift.io -n openshift-machine-api -o=jsonpath="{.items[?(@.spec.template.metadata.labels.machine\.openshift\.io\/os-id=='Windows')].spec.template.spec.providerSpec.value.adminUsername}")
+
+    # Fallback to default if not found
+    if [[ -z "$admin_username" ]]; then
+        admin_username=$(get_user_name "azure")
+    fi
+
+    # Get configuration values
+    local admin_password=$(get_config "WINC_ADMIN_PASSWORD")
+    local ssh_key=$(get_config "WINC_SSH_PUBLIC_KEY")
+    local instance_type=$(get_config "AZURE_INSTANCE_SIZE" "Standard_D2s_v3")
+    local vm_extension_version=$(get_config "AZURE_VM_EXTENSION_HANDLER_VERSION" "1.9")
+    local env_tag=$(get_config "ENVIRONMENT_TAG" "production")
+    local managed_by=$(get_config "MANAGED_BY_TAG" "terraform")
+    local container_port=$(get_config "WINDOWS_CONTAINER_LOGS_PORT" "10250")
+
+    # Determine image version based on Windows version
+    local image_version
+    if [[ "$win_version" == "2019" ]]; then
+        image_version=$(get_config "AZURE_2019_IMAGE_VERSION" "latest")
+    else
+        image_version=$(get_config "AZURE_2022_IMAGE_VERSION" "latest")
+    fi
+
+    cat > "${tfvars_file}" << EOF
+# Auto-generated Terraform variables for Azure
+winc_number_workers           = ${num_byoh}
+winc_machine_hostname         = "${win_machine_hostname}"
+winc_instance_name            = "${byoh_name}"
+winc_resource_group           = "${resource_group}"
+winc_resource_prefix          = "${resource_prefix}"
+winc_worker_sku               = "${sku}"
+winc_instance_type            = "${instance_type}"
+admin_username                = "${admin_username}"
+admin_password                = "${admin_password}"
+ssh_public_key                = "${ssh_key}"
+vm_extension_handler_version  = "${vm_extension_version}"
+windows_image_version         = "${image_version}"
+environment_tag               = "${env_tag}"
+managed_by_tag                = "${managed_by}"
+container_logs_port           = ${container_port}
+EOF
+}
+
+# Write vSphere Terraform variables to tfvars file
+function write_vsphere_tfvars() {
+    local templates_dir="$1"
+    local byoh_name="$2"
+    local num_byoh="$3"
+    local win_version="${4:-2022}"
+
+    local tfvars_file="${templates_dir}/terraform.auto.tfvars"
+
+    local win_machine_hostname=$(oc get nodes -l "node-role.kubernetes.io/worker,windowsmachineconfig.openshift.io/byoh!=true" -o=jsonpath="{.items[0].metadata.name}")
+
+    # Get template from Windows machineset
+    local template=$(oc get machineset.machine.openshift.io -n openshift-machine-api -o=jsonpath="{.items[?(@.spec.template.metadata.labels.machine\.openshift\.io\/os-id=='Windows')].spec.template.spec.providerSpec.value.template}")
+
+    local datacenter=$(oc get machineset.machine.openshift.io -n openshift-machine-api -o=jsonpath="{.items[?(@.spec.template.metadata.labels.machine\.openshift\.io\/os-id=='Windows')].spec.template.spec.providerSpec.value.workspace.datacenter}")
+    local datastore=$(oc get machineset.machine.openshift.io -n openshift-machine-api -o=jsonpath="{.items[?(@.spec.template.metadata.labels.machine\.openshift\.io\/os-id=='Windows')].spec.template.spec.providerSpec.value.workspace.datastore}")
+    local network=$(oc get machineset.machine.openshift.io -n openshift-machine-api -o=jsonpath="{.items[?(@.spec.template.metadata.labels.machine\.openshift\.io\/os-id=='Windows')].spec.template.spec.providerSpec.value.network.devices[0].networkName}")
+    local resource_pool=$(oc get machineset.machine.openshift.io -n openshift-machine-api -o=jsonpath="{.items[?(@.spec.template.metadata.labels.machine\.openshift\.io\/os-id=='Windows')].spec.template.spec.providerSpec.value.workspace.resourcePool}")
+
+    # If resourcePool is empty in Windows machineset, fall back to first available machineset
+    if [[ -z "$resource_pool" ]]; then
+        log "ResourcePool not found in Windows machineset, falling back to first available machineset"
+        resource_pool=$(oc get machineset.machine.openshift.io -n openshift-machine-api -o=jsonpath="{.items[0].spec.template.spec.providerSpec.value.workspace.resourcePool}")
+    fi
+
+    local admin_username=$(get_user_name "vsphere")
+    local admin_password=$(get_config "WINC_ADMIN_PASSWORD")
+    local ssh_key=$(get_config "WINC_SSH_PUBLIC_KEY")
+
+    cat > "${tfvars_file}" << EOF
+# Auto-generated Terraform variables for vSphere
+winc_number_workers   = ${num_byoh}
+winc_machine_hostname = "${win_machine_hostname}"
+winc_instance_name    = "${byoh_name}"
+winc_vsphere_template = "${template}"
+winc_datacenter       = "${datacenter}"
+winc_datastore        = "${datastore}"
+winc_network          = "${network}"
+winc_resource_pool    = "${resource_pool}"
+vsphere_user          = "${VSPHERE_USER}"
+vsphere_password      = "${VSPHERE_PASSWORD}"
+vsphere_server        = "${VSPHERE_SERVER}"
+admin_username        = "${admin_username}"
+admin_password        = "${admin_password}"
+ssh_public_key        = "${ssh_key}"
+EOF
+}
+
+# Write Nutanix Terraform variables to tfvars file
+function write_nutanix_tfvars() {
+    local templates_dir="$1"
+    local byoh_name="$2"
+    local num_byoh="$3"
+    local win_version="${4:-2022}"
+
+    local tfvars_file="${templates_dir}/terraform.auto.tfvars"
+
+    local win_machine_hostname=$(oc get nodes -l "node-role.kubernetes.io/worker,windowsmachineconfig.openshift.io/byoh!=true" -o=jsonpath="{.items[0].metadata.name}")
+
+    # Extract configuration from Windows machineset
+    local cluster_uuid=$(oc get machineset.machine.openshift.io -n openshift-machine-api -o=jsonpath="{.items[?(@.spec.template.metadata.labels.machine\.openshift\.io\/os-id=='Windows')].spec.template.spec.providerSpec.value.cluster.uuid}")
+    local subnet_uuid=$(oc get machineset.machine.openshift.io -n openshift-machine-api -o=jsonpath="{.items[?(@.spec.template.metadata.labels.machine\.openshift\.io\/os-id=='Windows')].spec.template.spec.providerSpec.value.subnets[0].uuid}")
+    local image_name=$(oc get machineset.machine.openshift.io -n openshift-machine-api -o=jsonpath="{.items[?(@.spec.template.metadata.labels.machine\.openshift\.io\/os-id=='Windows')].spec.template.spec.providerSpec.value.image.name}")
+
+    # Extract Prism Central endpoint from cloud-provider-config
+    local prism_endpoint=$(oc get cm cloud-provider-config -n openshift-config -o jsonpath='{.data.config}' | jq -r '.prismCentral.address')
+    local prism_port=$(oc get cm cloud-provider-config -n openshift-config -o jsonpath='{.data.config}' | jq -r '.prismCentral.port')
+
+    local admin_username=$(get_user_name "nutanix")
+    local admin_password=$(get_config "WINC_ADMIN_PASSWORD")
+    local ssh_key=$(get_config "WINC_SSH_PUBLIC_KEY")
+
+    cat > "${tfvars_file}" << EOF
+# Auto-generated Terraform variables for Nutanix
+winc_number_workers   = ${num_byoh}
+winc_machine_hostname = "${win_machine_hostname}"
+winc_instance_name    = "${byoh_name}"
+winc_cluster_uuid     = "${cluster_uuid}"
+subnet_uuid           = "${subnet_uuid}"
+primary_windows_image = "${image_name}"
+nutanix_endpoint      = "${prism_endpoint}"
+nutanix_port          = ${prism_port}
+nutanix_username      = "${NUTANIX_USERNAME}"
+nutanix_password      = "${NUTANIX_PASSWORD}"
+admin_username        = "${admin_username}"
+admin_password        = "${admin_password}"
+ssh_public_key        = "${ssh_key}"
+EOF
+}
+
+# Write "none" platform Terraform variables to tfvars file
+function write_none_tfvars() {
+    local templates_dir="$1"
+    local byoh_name="$2"
+    local num_byoh="$3"
+    local win_version="${4:-2022}"
+
+    local tfvars_file="${templates_dir}/terraform.auto.tfvars"
+
+    # Get Linux node information for platform "none" (UPI/baremetal on AWS)
+    local linux_node=$(oc get nodes -l "node-role.kubernetes.io/worker,windowsmachineconfig.openshift.io/byoh!=true" -o=jsonpath="{.items[0].status.addresses[?(@.type=='Hostname')].address}")
+
+    # Construct full DNS name or resolve it via nslookup
+    local win_machine_hostname
+    local region
+    if [[ -n "${AWS_REGION:-}" ]]; then
+        # Use AWS_REGION if set
+        region="${AWS_REGION}"
+        win_machine_hostname="${linux_node}.${region}.compute.internal"
+    else
+        # Otherwise, resolve via nslookup
+        local ip_linux_node=$(oc get node ${linux_node} -o=jsonpath="{.status.addresses[?(@.type=='InternalIP')].address}")
+        win_machine_hostname=$(oc debug node/${linux_node} -- nslookup ${ip_linux_node} 2>/dev/null | grep -oP 'name = \K[^.]*.*' | sed 's/\.$//')
+        region=$(echo "${win_machine_hostname}" | cut -d "." -f2)
+    fi
+
+    local admin_username=$(get_user_name "none")
+    local admin_password=$(get_config "WINC_ADMIN_PASSWORD")
+    local ssh_key=$(get_config "WINC_SSH_PUBLIC_KEY")
+    local instance_type=$(get_config "AWS_INSTANCE_TYPE" "m5a.large")
+
+    cat > "${tfvars_file}" << EOF
+# Auto-generated Terraform variables for none/baremetal platform
+# AWS credentials are automatically discovered via AWS SDK from:
+# - AWS_SHARED_CREDENTIALS_FILE + AWS_PROFILE (Jenkins/flexy)
+# - ~/.aws/credentials (local development)
+# - Environment variables (CI/CD)
+winc_number_workers   = ${num_byoh}
+winc_machine_hostname = "${win_machine_hostname}"
+winc_instance_name    = "${byoh_name}"
+winc_region           = "${region}"
+winc_version          = "${win_version}"
+winc_instance_type    = "${instance_type}"
+admin_username        = "${admin_username}"
+admin_password        = "${admin_password}"
+ssh_public_key        = "${ssh_key}"
+EOF
 }
 
 # GCP Terraform arguments
@@ -160,15 +421,25 @@ function get_vsphere_terraform_args() {
     local win_version="$3"
 
     local win_machine_hostname=$(oc get nodes -l "node-role.kubernetes.io/worker,windowsmachineconfig.openshift.io/byoh!=true" -o=jsonpath="{.items[0].metadata.name}")
+
+    # Get template from Windows machineset
+    local template=$(oc get machineset.machine.openshift.io -n openshift-machine-api -o=jsonpath="{.items[?(@.spec.template.metadata.labels.machine\.openshift\.io\/os-id=='Windows')].spec.template.spec.providerSpec.value.template}")
+
     local datacenter=$(oc get machineset.machine.openshift.io -n openshift-machine-api -o=jsonpath="{.items[?(@.spec.template.metadata.labels.machine\.openshift\.io\/os-id=='Windows')].spec.template.spec.providerSpec.value.workspace.datacenter}")
     local datastore=$(oc get machineset.machine.openshift.io -n openshift-machine-api -o=jsonpath="{.items[?(@.spec.template.metadata.labels.machine\.openshift\.io\/os-id=='Windows')].spec.template.spec.providerSpec.value.workspace.datastore}")
-    local folder=$(oc get machineset.machine.openshift.io -n openshift-machine-api -o=jsonpath="{.items[?(@.spec.template.metadata.labels.machine\.openshift\.io\/os-id=='Windows')].spec.template.spec.providerSpec.value.workspace.folder}")
     local network=$(oc get machineset.machine.openshift.io -n openshift-machine-api -o=jsonpath="{.items[?(@.spec.template.metadata.labels.machine\.openshift\.io\/os-id=='Windows')].spec.template.spec.providerSpec.value.network.devices[0].networkName}")
-    local template="Windows-Server-${win_version}-Template"
+    local resource_pool=$(oc get machineset.machine.openshift.io -n openshift-machine-api -o=jsonpath="{.items[?(@.spec.template.metadata.labels.machine\.openshift\.io\/os-id=='Windows')].spec.template.spec.providerSpec.value.workspace.resourcePool}")
+
+    # If resourcePool is empty in Windows machineset, fall back to first available machineset
+    if [[ -z "$resource_pool" ]]; then
+        resource_pool=$(oc get machineset.machine.openshift.io -n openshift-machine-api -o=jsonpath="{.items[0].spec.template.spec.providerSpec.value.workspace.resourcePool}")
+    fi
+
+    local admin_username=$(get_user_name "vsphere")
     local admin_password=$(get_config "WINC_ADMIN_PASSWORD")
     local ssh_key=$(get_config "WINC_SSH_PUBLIC_KEY")
 
-    echo "--var winc_number_workers=${num_byoh} --var winc_machine_hostname=${win_machine_hostname} --var winc_instance_name=${byoh_name} --var winc_datacenter=${datacenter} --var winc_datastore=${datastore} --var winc_folder=${folder} --var winc_network=${network} --var winc_template=${template} --var admin_password='${admin_password}' --var ssh_public_key='${ssh_key}'"
+    echo "--var winc_number_workers=${num_byoh} --var winc_machine_hostname=${win_machine_hostname} --var winc_instance_name=${byoh_name} --var winc_vsphere_template=${template} --var winc_datacenter=${datacenter} --var winc_datastore=${datastore} --var winc_network=${network} --var winc_resource_pool=${resource_pool} --var vsphere_user=${VSPHERE_USER} --var vsphere_password=${VSPHERE_PASSWORD} --var vsphere_server=${VSPHERE_SERVER} --var admin_username='${admin_username}' --var admin_password='${admin_password}' --var ssh_public_key='${ssh_key}'"
 }
 
 # Nutanix Terraform arguments

@@ -30,8 +30,10 @@ function load_config_file() {
             value="${value%\'}"
             value="${value#\'}"
 
-            # Export the variable
-            export "$key=$value"
+            # Only export if not already set in environment (environment takes precedence)
+            if [[ -z "${!key:-}" ]]; then
+                export "$key=$value"
+            fi
         done < <(grep -v '^[[:space:]]*$' "$config_file")
     fi
 }
@@ -101,13 +103,18 @@ function create_user_config() {
 # WINC_SSH_PUBLIC_KEY="ssh-rsa AAAA..."
 
 # Windows Settings
-# WINDOWS_ADMIN_USERNAME=Administrator
+# WINDOWS_ADMIN_USERNAME - Platform-specific (Azure: capi, Others: Administrator)
 # WINDOWS_CONTAINER_LOGS_PORT=10250
 
 # Azure-specific
 # AZURE_VM_EXTENSION_HANDLER_VERSION=1.9
 # AZURE_2019_IMAGE_VERSION=latest
 # AZURE_2022_IMAGE_VERSION=latest
+
+# AWS Configuration
+# AWS_PROFILE - For SAML/SSO, set to your profile name (e.g., "saml")
+#               Leave empty for CI/CD using environment variables
+# AWS_PROFILE=saml
 
 # Instance Tags
 # ENVIRONMENT_TAG=production

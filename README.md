@@ -155,7 +155,7 @@ See [configs/examples/](configs/examples/) for platform-specific examples:
 
 | Variable | Description | Default |
 |----------|-------------|---------|
-| `WINDOWS_ADMIN_USERNAME` | Windows administrator username | Administrator |
+| `WINDOWS_ADMIN_USERNAME` | Windows administrator username | Platform-specific: Azure=`capi`, Others=`Administrator` |
 | `WINDOWS_CONTAINER_LOGS_PORT` | Container logs port | 10250 |
 | `AZURE_VM_EXTENSION_HANDLER_VERSION` | Azure VM extension version | 1.9 |
 | `AZURE_2019_IMAGE_VERSION` | Azure Win 2019 image version | latest |

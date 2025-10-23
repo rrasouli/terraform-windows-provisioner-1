@@ -37,6 +37,12 @@ variable "winc_region" {
   type        = string
 }
 
+variable "aws_profile" {
+  description = "AWS profile to use for authentication (e.g., 'saml' for SAML-based credentials)"
+  type        = string
+  default     = ""
+}
+
 # Authentication Configuration
 variable "admin_username" {
   description = "Administrator username for Windows instances"
