@@ -1,0 +1,133 @@
+# ==============================================================================
+# vSphere BYOH Configuration with PTR Record Support
+# ==============================================================================
+# Example terraform.tfvars for vSphere with WINC-1633 PTR record creation
+#
+# Usage:
+#   1. Copy this file: cp examples/vsphere-with-ptr.tfvars.example terraform.tfvars
+#   2. Update values below with your environment details
+#   3. Run: terraform init && terraform apply
+# ==============================================================================
+
+# ------------------------------------------------------------------------------
+# vSphere Infrastructure Configuration
+# ------------------------------------------------------------------------------
+vsphere_server         = "vcenter.example.com"
+vsphere_user           = "administrator@vsphere.local"
+vsphere_password       = "CHANGE_ME_VSPHERE_PASSWORD"
+
+winc_datacenter        = "WINC-DC"
+winc_datastore         = "vsanDatastore"
+winc_network           = "VM Network"
+winc_resource_pool     = "WINC-ResourcePool"
+winc_vsphere_template  = "windows-server-2022-template"
+
+# ------------------------------------------------------------------------------
+# BYOH Instance Configuration
+# ------------------------------------------------------------------------------
+winc_instance_name     = "winc-byoh"
+winc_machine_hostname  = "worker-0.winc.devcluster.openshift.com"
+winc_number_workers    = 2
+
+# Windows administrator credentials
+admin_username         = "Administrator"
+admin_password         = "CHANGE_ME_WINDOWS_PASSWORD"
+
+# SSH public key for remote access
+ssh_public_key         = "ssh-rsa AAAAB3NzaC1yc2EAAAADAQABAAACAQC... user@host"
+
+# ------------------------------------------------------------------------------
+# DNS PTR Configuration (NEW - for WINC-1633)
+# ------------------------------------------------------------------------------
+
+# DNS server that will host PTR records
+dns_server             = "10.0.76.5"
+
+# DNS domain for Windows instances
+# This should match your OpenShift cluster's DNS domain
+dns_domain             = "winc.devcluster.openshift.com"
+
+# Reverse DNS zone for PTR records
+# For subnet 10.0.0.0/16, use: "0.10.in-addr.arpa."
+# For subnet 10.0.176.0/24, use: "176.0.10.in-addr.arpa."
+dns_reverse_zone       = "0.10.in-addr.arpa."
+
+# ------------------------------------------------------------------------------
+# RFC 2136 TSIG Authentication (for Dynamic DNS Updates)
+# ------------------------------------------------------------------------------
+
+# TSIG key name (must match DNS server configuration)
+dns_key_name           = "update-key"
+
+# TSIG key algorithm
+# Options: hmac-sha256, hmac-sha512, hmac-md5
+dns_key_algorithm      = "hmac-sha256"
+
+# TSIG key secret (Base64-encoded)
+# Generate with: tsig-keygen -a hmac-sha256 update-key
+# IMPORTANT: Keep this secret secure! Use environment variable in production:
+#   export TF_VAR_dns_key_secret="YOUR_BASE64_KEY"
+dns_key_secret         = "CHANGE_ME_BASE64_TSIG_KEY"
+
+# ------------------------------------------------------------------------------
+# Feature Flags
+# ------------------------------------------------------------------------------
+
+# Enable PTR record creation (recommended for WINC-1633 fix)
+enable_ptr_records     = true
+
+# Validate PTR records after creation using nslookup
+validate_ptr_records   = true
+
+# ------------------------------------------------------------------------------
+# Networking Configuration
+# ------------------------------------------------------------------------------
+container_logs_port    = 10250
+
+# ==============================================================================
+# OPTIONAL: Alternative DNS Providers
+# ==============================================================================
+
+# ------------------------------------------------------------------------------
+# PowerDNS Configuration (if using PowerDNS instead of RFC 2136)
+# ------------------------------------------------------------------------------
+# Uncomment and configure if using PowerDNS API:
+#
+# powerdns_server_url    = "http://pdns-server.example.com:8081"
+# powerdns_api_key       = "CHANGE_ME_POWERDNS_API_KEY"
+
+# ------------------------------------------------------------------------------
+# Windows DNS Server Configuration (if using PowerShell management)
+# ------------------------------------------------------------------------------
+# Uncomment and configure if managing Windows DNS Server directly:
+#
+# dns_admin_username     = "DOMAIN\\Administrator"
+# dns_admin_password     = "CHANGE_ME_DNS_ADMIN_PASSWORD"
+
+# ==============================================================================
+# Production Best Practices
+# ==============================================================================
+#
+# 1. Use environment variables for sensitive values:
+#    export TF_VAR_vsphere_password="SecurePassword"
+#    export TF_VAR_admin_password="WindowsPassword"
+#    export TF_VAR_dns_key_secret="Base64Key"
+#
+# 2. Use remote state backend:
+#    terraform {
+#      backend "s3" {
+#        bucket = "my-terraform-state"
+#        key    = "winc-byoh/vsphere/terraform.tfstate"
+#        region = "us-east-1"
+#      }
+#    }
+#
+# 3. Verify PTR records after deployment:
+#    terraform output ptr_records
+#    nslookup <IP> <DNS_SERVER>
+#
+# 4. Monitor WMCO logs for DNS resolution:
+#    oc logs -n openshift-windows-machine-config-operator \
+#      deployment/windows-machine-config-operator
+#
+# ==============================================================================
